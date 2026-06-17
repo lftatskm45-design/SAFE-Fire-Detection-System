@@ -1,0 +1,104 @@
+#include <SoftwareSerial.h>
+
+const int MQ2_PIN = A0;
+const int TEMP_PIN = A1;
+const int FLAME_SENSOR_PIN = 2;
+const int BUZZER_PIN = 8;
+const int LED_PIN = 9;
+const int GSM_RX_PIN = 10;
+const int GSM_TX_PIN = 11;
+
+SoftwareSerial gsmSerial(GSM_RX_PIN, GSM_TX_PIN);
+
+const char PHONE_NUMBER[] = "+1234567890";
+const char ALERT_MESSAGE[] = "WARNING: Fire detected by S.A.F.E. Fire Detection System. Please check immediately.";
+
+const int SMOKE_THRESHOLD = 350;
+const float TEMP_THRESHOLD = 55.0;
+const int FLAME_DETECTED_STATE = LOW;
+
+bool fireAlertSent = false;
+unsigned long lastReadTime = 0;
+const unsigned long READ_INTERVAL = 1000;
+
+float readLM35Temperature() {
+  int rawValue = analogRead(TEMP_PIN);
+  float voltage = rawValue * (5.0 / 1023.0);
+  return voltage * 100.0;
+}
+
+void initializeSIM800L() {
+  delay(1000);
+  gsmSerial.println("AT");
+  delay(1000);
+  gsmSerial.println("AT+CMGF=1");
+  delay(1000);
+}
+
+void sendSMSAlert() {
+  gsmSerial.println("AT+CMGF=1");
+  delay(1000);
+  gsmSerial.print("AT+CMGS=\"");
+  gsmSerial.print(PHONE_NUMBER);
+  gsmSerial.println("\"");
+  delay(1000);
+  gsmSerial.print(ALERT_MESSAGE);
+  delay(500);
+  gsmSerial.write(26);
+  delay(5000);
+}
+
+void setup() {
+  Serial.begin(9600);
+  gsmSerial.begin(9600);
+  pinMode(FLAME_SENSOR_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(LED_PIN, LOW);
+  initializeSIM800L();
+  Serial.println("S.A.F.E. Fire Detection System Started");
+}
+
+void loop() {
+  if (millis() - lastReadTime >= READ_INTERVAL) {
+    lastReadTime = millis();
+
+    int smokeValue = analogRead(MQ2_PIN);
+    float temperatureC = readLM35Temperature();
+    int flameState = digitalRead(FLAME_SENSOR_PIN);
+
+    bool smokeDetected = smokeValue >= SMOKE_THRESHOLD;
+    bool tempDetected = temperatureC >= TEMP_THRESHOLD;
+    bool flameDetected = flameState == FLAME_DETECTED_STATE;
+
+    int fireVotes = 0;
+    if (smokeDetected) fireVotes++;
+    if (tempDetected) fireVotes++;
+    if (flameDetected) fireVotes++;
+
+    Serial.print("Smoke: ");
+    Serial.print(smokeValue);
+    Serial.print(" | Temp C: ");
+    Serial.print(temperatureC);
+    Serial.print(" | Flame: ");
+    Serial.println(flameDetected ? "DETECTED" : "SAFE");
+
+    if (fireVotes >= 2) {
+      digitalWrite(BUZZER_PIN, HIGH);
+      digitalWrite(LED_PIN, HIGH);
+
+      if (!fireAlertSent) {
+        sendSMSAlert();
+        fireAlertSent = true;
+      }
+
+      Serial.println("ALERT: Fire condition detected.");
+    } else {
+      digitalWrite(BUZZER_PIN, LOW);
+      digitalWrite(LED_PIN, LOW);
+      fireAlertSent = false;
+      Serial.println("System Safe.");
+    }
+  }
+}
